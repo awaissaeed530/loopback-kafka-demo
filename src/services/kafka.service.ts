@@ -1,33 +1,31 @@
+/* eslint-disable @typescript-eslint/no-floating-promises */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import {BindingScope, inject, injectable} from '@loopback/core';
+import {BindingScope, injectable} from '@loopback/core';
 import {
   ConsumerGroup,
   HighLevelProducer,
   KafkaClient,
   ProduceRequest,
 } from 'kafka-node';
+import {KafkaNodeReply} from './kafka-reply.service';
 import uuid = require('uuid');
-
-const KAFKA_HOST = 'localhost:9092';
 
 @injectable({scope: BindingScope.APPLICATION})
 export class KafkaService {
   private client: KafkaClient;
   private producer: HighLevelProducer;
+  private kafkaHost: string;
 
-  constructor(
-    @inject('kafka.host', {optional: true})
-    private kafkaHost: string = KAFKA_HOST,
-  ) {
-    this.client = new KafkaClient({kafkaHost});
-    this.producer = new HighLevelProducer(this.client, {});
+  constructor() {
+    this.kafkaHost = 'localhost:9092';
+    this.client = new KafkaClient({kafkaHost: this.kafkaHost});
+    this.producer = new HighLevelProducer(this.client);
   }
 
-  async publish(message: string, topic: string): Promise<any> {
-    // await this.isProducerReady();
-    const req: ProduceRequest = {topic, messages: [message]};
+  async publish(messages: string, topic: string, key?: string): Promise<any> {
+    const payloads: ProduceRequest[] = [{messages, key, topic}];
     return new Promise<any>((resolve, reject) => {
-      this.producer.send([req], (err, data) => {
+      this.producer.send(payloads, (err, data) => {
         if (err) reject(err);
         else resolve(data);
       });
@@ -35,14 +33,20 @@ export class KafkaService {
   }
 
   consumeMessages(topic: string) {
-    const consumer = this.createConsumer('', [topic], 'none');
+    const consumer = this.createConsumer('getUserConsumer', [topic]);
 
     consumer.on('message', message => {
       console.log(
-        `id: ${message.offset}\nevent: message\ndata: ${JSON.stringify(
-          message,
-        )}\n`,
+        `Recieved message from getUser topic: ${JSON.stringify(message.value)}`,
       );
+      const parsedMessage = JSON.parse(message.value as string);
+      this.publish(
+        JSON.stringify({
+          users: [{name: 'Awais Saeed'}, {name: 'Muhammad Tayyab'}],
+        }),
+        parsedMessage.callback.kafka.topic,
+        parsedMessage.callback.kafka.key,
+      ).then();
     });
   }
 
@@ -61,5 +65,36 @@ export class KafkaService {
       topics,
     );
     return consumer;
+  }
+
+  async replyRequest(message: string) {
+    const requestTopicOptions = {
+      topic: 'getUser',
+    };
+
+    const responseTopicOptions = {
+      topic: 'getUserReply',
+      consumerOptions: {
+        groupId: 'getUserReplyConsumer',
+      },
+    };
+
+    const kafkaReqRes = new KafkaNodeReply(
+      this.client,
+      requestTopicOptions,
+      responseTopicOptions,
+    );
+
+    const request = {
+      ation: 'getUser',
+      body: {
+        message,
+      },
+      headers: {
+        ContentType: 'json/application',
+      },
+    };
+
+    return kafkaReqRes.requestSync(request, 30000);
   }
 }

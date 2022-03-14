@@ -56,6 +56,7 @@
     "@loopback/rest-explorer": "^4.1.0",
     "@loopback/service-proxy": "^4.1.0",
     "kafka-node": "^5.0.0",
+    "kafka-node-reply": "^1.0.4",
     "tslib": "^2.0.0",
     "uuid": "^8.3.2"
   },
