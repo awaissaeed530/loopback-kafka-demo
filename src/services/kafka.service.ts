@@ -31,9 +31,9 @@ export class KafkaService extends EventEmitter {
     this.producer = new HighLevelProducer(this.client);
   }
 
-  async publish(messages: any, topic: string, key?: string): Promise<any> {
+  publish(messages: any, topic: string, key?: string): Promise<any> {
     const payloads: ProduceRequest[] = [
-      {messages: JSON.stringify(messages), key, topic},
+      {messages: JSON.stringify(messages), key: key ?? RandomKey(30), topic},
     ];
     return new Promise<any>((resolve, reject) => {
       this.producer.send(payloads, (err, data) => {
@@ -43,17 +43,18 @@ export class KafkaService extends EventEmitter {
     });
   }
 
-  consumeGetUserMessages(topic: string) {
-    const consumer = this.createConsumer('getUserConsumer', [topic]);
+  consume(topic: string, groupId: string, callback: (value: any) => any) {
+    const consumer = this.createConsumer(groupId, [topic]);
+    const eventName = RandomKey(25);
+    this.on(eventName, callback);
 
     consumer.on('message', message => {
-      const parsedMessage = JSON.parse(message.value as string);
-      this.publish(
-        [{name: 'Awais Saeed'}, {name: 'Muhammad Tayyab'}],
-        parsedMessage.callback.kafka.topic,
-        parsedMessage.callback.kafka.key,
-      ).then();
+      const value = JSON.parse(message.value.toString());
+      this.emit(eventName, value);
       consumer.commit(() => {});
+    });
+    consumer.on('error', error => {
+      throw new Error(error);
     });
   }
 
