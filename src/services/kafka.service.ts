@@ -7,7 +7,6 @@ import {
   KafkaClient,
   ProduceRequest,
 } from 'kafka-node';
-import {KafkaNodeReply} from './kafka-reply.service';
 import uuid = require('uuid');
 
 @injectable({scope: BindingScope.APPLICATION})
@@ -36,9 +35,6 @@ export class KafkaService {
     const consumer = this.createConsumer('getUserConsumer', [topic]);
 
     consumer.on('message', message => {
-      console.log(
-        `Recieved message from getUser topic: ${JSON.stringify(message.value)}`,
-      );
       const parsedMessage = JSON.parse(message.value as string);
       this.publish(
         JSON.stringify({
@@ -47,14 +43,11 @@ export class KafkaService {
         parsedMessage.callback.kafka.topic,
         parsedMessage.callback.kafka.key,
       ).then();
+      consumer.commit(() => {});
     });
   }
 
-  private createConsumer(
-    groupId: string,
-    topics: string[],
-    clientId = uuid.v4(),
-  ) {
+  createConsumer(groupId: string, topics: string[], clientId = uuid.v4()) {
     const consumer = new ConsumerGroup(
       {
         kafkaHost: this.kafkaHost,
@@ -65,36 +58,5 @@ export class KafkaService {
       topics,
     );
     return consumer;
-  }
-
-  async replyRequest(message: string) {
-    const requestTopicOptions = {
-      topic: 'getUser',
-    };
-
-    const responseTopicOptions = {
-      topic: 'getUserReply',
-      consumerOptions: {
-        groupId: 'getUserReplyConsumer',
-      },
-    };
-
-    const kafkaReqRes = new KafkaNodeReply(
-      this.client,
-      requestTopicOptions,
-      responseTopicOptions,
-    );
-
-    const request = {
-      ation: 'getUser',
-      body: {
-        message,
-      },
-      headers: {
-        ContentType: 'json/application',
-      },
-    };
-
-    return kafkaReqRes.requestSync(request, 30000);
   }
 }

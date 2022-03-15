@@ -1,12 +1,8 @@
+/* eslint-disable @typescript-eslint/no-floating-promises */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import events, {EventEmitter} from 'events';
-import {
-  ConsumerGroup,
-  ConsumerGroupOptions,
-  CustomPartitioner,
-  HighLevelProducer,
-  KafkaClient,
-} from 'kafka-node';
+import {BindingScope, injectable, service} from '@loopback/core';
+import {EventEmitter} from 'events';
+import {KafkaService} from './kafka.service';
 
 const RandomKey = (length: number) => {
   let text = '';
@@ -16,37 +12,10 @@ const RandomKey = (length: number) => {
   return text;
 };
 
-export class KafkaNodeReply {
-  client: KafkaClient;
-  topicRequest: RequestOptions;
-  topicReply: ReplyOptions;
-  producer: HighLevelProducer;
-  consumer: ConsumerGroup;
-  replyEmitter: EventEmitter.EventEmitter;
-
-  /**
-   * @param client The kafka-node client
-   * @param topicRequest The topic request config
-   * @param topicReply The topic request config
-   *
-   * @returns HighLevelProducer with property function requestSync
-   */
-  constructor(
-    client: KafkaClient,
-    topicRequest: RequestOptions,
-    topicReply: ReplyOptions,
-  ) {
-    this.client = client;
-    this.topicRequest = topicRequest;
-    this.topicReply = topicReply;
-    this.replyEmitter = new events.EventEmitter();
-    this.consumer = this.newConsumerReply(this.topicReply);
-    this.producer = this.newHighLevelProducer();
-
-    // Start consumer
-    this.listenReplyEvent();
-
-    return this;
+@injectable({scope: BindingScope.APPLICATION})
+export class KafkaReplyService extends EventEmitter {
+  constructor(@service(KafkaService) private kafkaService: KafkaService) {
+    super();
   }
 
   /**
@@ -72,7 +41,7 @@ export class KafkaNodeReply {
    *     "date": "2019-04-11T04:59:22.006Z"
    * }
    *
-   * @param {Object} message The message
+   * @param {Object} messages The message
    * @param {String} message.action The action that consumer process
    * @param {Object} message.body The request body message
    * @param {String} message.contentType The message content type
@@ -91,30 +60,23 @@ export class KafkaNodeReply {
    * Returns:
    * Promise response from consumer
    */
-  requestSync(message: any, timeout: number) {
-    // Random key
+  requestSync(
+    messages: any,
+    timeout: number,
+    requestTopic: string,
+    replyTopic: string,
+  ): Promise<any> {
     const key = RandomKey(30);
-    if (!message.callback) {
+    if (!messages.callback) {
       const callback = {
         type: 'sync',
-        kafka: {
-          topic: this.topicReply.topic,
-          key: key,
-        },
+        kafka: {topic: replyTopic, key},
       };
-      message.callback = callback;
+      messages.callback = callback;
     }
 
-    // Stringify message
-    message = JSON.stringify(message);
-
-    // Prepare && Wrap message
-    const topic = {
-      messages: message,
-      key: key,
-      topic: this.topicRequest.topic,
-    };
-    const payloads = [topic];
+    messages = JSON.stringify(messages);
+    this.listenReplyEvent(replyTopic);
 
     return new Promise((resolve, reject) => {
       const settimeout = setTimeout(() => {
@@ -124,104 +86,28 @@ export class KafkaNodeReply {
         return reject(error);
       }, timeout);
 
-      this.replyEmitter.once(topic.key, (response: any) => {
+      this.once(key, (response: any) => {
         clearTimeout(settimeout);
         return resolve(response);
       });
 
-      this.producer?.send(payloads, function (err, data) {
-        if (err) {
-          console.log('DEBUG', data);
-          return reject(err);
-        }
-      });
+      this.kafkaService.publish(messages, requestTopic, key).then();
     });
   }
 
-  /**
-   * Create consumer group, config and options same to initialize a https://www.npmjs.com/package/kafka-node#consumer
-   *
-   * @param {Object} `options`
-   * @param {String} `topicReply.topic` Name of topic that reply consumer receive message
-   * @param {Object} `topicReply.options`
-   * @param {String} `topicReply.options.groupId` Unique groupId to identified group consume topic
-   * Example:
-   *  {
-   *     topicRequest: "PmsPropertyRoomCreate_Request",
-   *     topicReply: "PmsPropertyRoomCreate_Request",
-   *     options: {
-   *       groupId: "hms.cts.organization"
-   *     }
-   *  }
-   */
-  private newConsumerReply(options: ReplyOptions) {
-    const topicPartition: any = {};
-    topicPartition[options.topic] = undefined;
-
-    const consumerGroup = new ConsumerGroup(
-      options.consumerOptions,
-      options.topic,
-    );
-    consumerGroup.on('error', () => {
-      let consumerConnect = false;
-      const t = setTimeout(() => {
-        if (consumerConnect === false) {
-          this.newConsumerReply(this.topicReply);
-        } else {
-          consumerConnect = true;
-          clearTimeout(t);
-        }
-      }, 1000);
-    });
-    return consumerGroup;
-  }
-
-  /**
-   * Create new Producer base on KafkaNode.HighLevelProducer
-   *
-   * Returns:
-   * Kafka producer
-   */
-  private newHighLevelProducer() {
-    const producer = new HighLevelProducer(this.client);
-
-    producer.on('ready', function () {
-      console.info('[KafkaNodeReply] New Producer already');
-    });
-    producer.on('error', function (err: any) {
-      console.error('[KafkaNodeReply] ERROR when new Producer ', err);
-    });
-    return producer;
-  }
-
-  /**
-   * Start consumer and wait for message receive
-   * When receive a message. The events emit will publish this message value with key in message
-   */
-  private listenReplyEvent() {
-    this.consumer?.on('message', message => {
+  private listenReplyEvent(topic: string) {
+    const consumer = this.kafkaService.createConsumer('userReplyConsumer', [
+      topic,
+    ]);
+    consumer.on('message', message => {
       let response;
       try {
         response = JSON.parse(message.value.toString());
       } catch (err) {
         response = message.value;
       }
-      this.replyEmitter.emit(message.key as string, response);
-      this.consumer?.commit(() => {});
-    });
-
-    this.consumer?.on('error', error => {
-      console.error('[KafkaNodeReply] ERROR when consume: ', error);
+      this.emit(message.key as string, response);
+      consumer.commit(() => {});
     });
   }
 }
-
-type RequestOptions = {
-  topic: string;
-  customPartitioner?: CustomPartitioner;
-};
-
-type ReplyOptions = {
-  topic: string;
-  consumerOptions: ConsumerGroupOptions;
-};
