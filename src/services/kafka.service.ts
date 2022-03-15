@@ -5,6 +5,7 @@ import {
   ConsumerGroup,
   HighLevelProducer,
   KafkaClient,
+  Message,
   ProduceRequest,
 } from 'kafka-node';
 import EventEmitter = require('events');
@@ -43,14 +44,18 @@ export class KafkaService extends EventEmitter {
     });
   }
 
-  consume(topic: string, groupId: string, callback: (value: any) => any) {
+  consume(
+    topic: string,
+    groupId: string,
+    callback: (value: any, message: Message) => any,
+  ) {
     const consumer = this.createConsumer(groupId, [topic]);
     const eventName = RandomKey(25);
     this.on(eventName, callback);
 
     consumer.on('message', message => {
       const value = JSON.parse(message.value.toString());
-      this.emit(eventName, value);
+      this.emit(eventName, value, message);
       consumer.commit(() => {});
     });
     consumer.on('error', error => {
@@ -58,7 +63,7 @@ export class KafkaService extends EventEmitter {
     });
   }
 
-  requestSync(messages: any, action: string): Promise<any> {
+  publishSync(messages: any, action: string): Promise<any> {
     const key = RandomKey(30);
     const replyTopic = `${action}Reply`;
 
@@ -66,7 +71,8 @@ export class KafkaService extends EventEmitter {
       body: messages,
       callback: {
         type: 'sync',
-        kafka: {topic: replyTopic, key},
+        topic: replyTopic,
+        key,
       },
     };
 
@@ -78,6 +84,13 @@ export class KafkaService extends EventEmitter {
       });
 
       this.publish(messageData, action, key).then();
+    });
+  }
+
+  consumeSync(action: string, callback: (value: any) => any) {
+    this.consume(action, `${action}Consumer`, value => {
+      const response = callback(value.body);
+      this.publish(response, value.callback.topic, value.callback.key);
     });
   }
 
@@ -99,16 +112,8 @@ export class KafkaService extends EventEmitter {
   }
 
   private listenReplyEvent(topic: string) {
-    const consumer = this.createConsumer('userReplyConsumer', [topic]);
-    consumer.on('message', message => {
-      let response;
-      try {
-        response = JSON.parse(message.value.toString());
-      } catch (err) {
-        response = message.value;
-      }
+    this.consume(topic, `${topic}Consumer`, (response, message) => {
       this.emit(message.key as string, response);
-      consumer.commit(() => {});
     });
   }
 }

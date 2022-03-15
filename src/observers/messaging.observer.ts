@@ -10,8 +10,12 @@ export class MessagingObserver implements LifeCycleObserver {
    * called at most once for a given application instance.
    */
   async init(): Promise<void> {
-    this.kafkaService.consume('products', 'messaging', response => {
-      console.log(response, 'Products');
+    // this.kafkaService.consume('products', 'messaging', response => {
+    //   console.log(response, 'Products');
+    // });
+
+    this.kafkaService.consumeSync('products', request => {
+      return [{name: 'Awais'}, {name: 'Tayyab'}];
     });
   }
 

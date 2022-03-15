@@ -21,6 +21,6 @@ export class ProductController {
     })
     product: Product,
   ) {
-    return this.kafkaService.publish({name: product.name}, 'products');
+    return this.kafkaService.publishSync({name: product.name}, 'products');
   }
 }
