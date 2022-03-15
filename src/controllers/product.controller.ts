@@ -3,14 +3,12 @@
 import {service} from '@loopback/core';
 import {getModelSchemaRef, post, requestBody} from '@loopback/rest';
 import {Product} from '../models';
-import {KafkaReplyService} from '../services/kafka-reply.service';
+import {KafkaService} from '../services';
 
 // import {inject} from '@loopback/core';
 
 export class ProductController {
-  constructor(
-    @service(KafkaReplyService) private kafkaReplyService: KafkaReplyService,
-  ) {}
+  constructor(@service(KafkaService) private kafkaService: KafkaService) {}
 
   @post('/produts')
   createProduct(
@@ -23,15 +21,6 @@ export class ProductController {
     })
     product: Product,
   ) {
-    return this.kafkaReplyService.requestSync(
-      {
-        body: {
-          name: product.name,
-        },
-      },
-      30000,
-      'getUser',
-      'getUserReply',
-    );
+    return this.kafkaService.requestSync({name: product.name}, 'getUser');
   }
 }
